@@ -10,22 +10,27 @@ import {
     where,
     orderBy,
     onSnapshot,
-    updateDoc
+    updateDoc,
+    deleteDoc
 } from 'firebase/firestore'
 import {
     createUserWithEmailAndPassword,
     signInWithEmailAndPassword,
     signOut,
-    onAuthStateChanged
+    onAuthStateChanged,
+    deleteUser,
+    updatePassword,
+    reauthenticateWithCredential,
+    EmailAuthProvider
 } from 'firebase/auth'
 import { db, auth } from './firebase'
 
 const detailers = [
-    { id: 1, name: 'BRNNO Elite', location: 'Los Angeles, CA', phone: '(323) 555-0123', rating: 4.8, reviews: 127, services: ['Car', 'Truck', 'SUV'] },
-    { id: 2, name: 'BRNNO Shine', location: 'Beverly Hills, CA', phone: '(310) 555-0456', rating: 4.9, reviews: 89, services: ['Car', 'Motorcycle', 'SUV'] },
-    { id: 3, name: 'BRNNO Premium', location: 'Santa Monica, CA', phone: '(424) 555-0789', rating: 4.7, reviews: 203, services: ['Car', 'Truck', 'RV'] },
-    { id: 4, name: 'BRNNO Care', location: 'Hollywood, CA', phone: '(323) 555-0321', rating: 4.6, reviews: 156, services: ['Car', 'SUV'] },
-    { id: 5, name: 'BRNNO Experts', location: 'Pasadena, CA', phone: '(626) 555-0654', rating: 4.9, reviews: 94, services: ['Car', 'Truck', 'SUV', 'Commercial'] },
+    { id: 1, name: 'BRNNO Elite (Demo)', location: 'Los Angeles, CA', phone: '(323) 555-0123', rating: 4.8, reviews: 127, services: ['Car', 'Truck', 'SUV'], isDemo: true },
+    { id: 2, name: 'BRNNO Shine (Demo)', location: 'Beverly Hills, CA', phone: '(310) 555-0456', rating: 4.9, reviews: 89, services: ['Car', 'Motorcycle', 'SUV'], isDemo: true },
+    { id: 3, name: 'BRNNO Premium (Demo)', location: 'Santa Monica, CA', phone: '(424) 555-0789', rating: 4.7, reviews: 203, services: ['Car', 'Truck', 'RV'], isDemo: true },
+    { id: 4, name: 'BRNNO Care (Demo)', location: 'Hollywood, CA', phone: '(323) 555-0321', rating: 4.6, reviews: 156, services: ['Car', 'SUV'], isDemo: true },
+    { id: 5, name: 'BRNNO Experts (Demo)', location: 'Pasadena, CA', phone: '(626) 555-0654', rating: 4.9, reviews: 94, services: ['Car', 'Truck', 'SUV', 'Commercial'], isDemo: true },
 ]
 
 function App() {
@@ -50,9 +55,17 @@ function App() {
     })
     const [showRequestForm, setShowRequestForm] = useState(false)
     const [showLogin, setShowLogin] = useState(false)
+    const [showSignup, setShowSignup] = useState(false)
     const [showBusinessLogin, setShowBusinessLogin] = useState(false)
     const [showBusinessSignup, setShowBusinessSignup] = useState(false)
     const [loginForm, setLoginForm] = useState({ email: '', password: '' })
+    const [signupForm, setSignupForm] = useState({
+        name: '',
+        email: '',
+        password: '',
+        confirmPassword: '',
+        phone: ''
+    })
     const [businessLoginForm, setBusinessLoginForm] = useState({ email: '', password: '' })
     const [businessSignupForm, setBusinessSignupForm] = useState({
         businessName: '',
@@ -61,11 +74,29 @@ function App() {
         confirmPassword: '',
         phone: '',
         location: '',
-        services: []
+        services: [],
+        businessLicense: '',
+        taxId: '',
+        businessType: '',
+        yearsInBusiness: '',
+        insuranceProvider: '',
+        insurancePolicyNumber: ''
     })
     const [profile, setProfile] = useState({ name: '', email: '', phone: '' })
     const [passwordForm, setPasswordForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' })
     const [showPasswordForm, setShowPasswordForm] = useState(false)
+    const [isSubmitting, setIsSubmitting] = useState(false)
+    const [isSavingProfile, setIsSavingProfile] = useState(false)
+    const [isChangingPassword, setIsChangingPassword] = useState(false)
+    const [showPassword, setShowPassword] = useState(false)
+    const [showSignupPassword, setShowSignupPassword] = useState(false)
+    const [showSignupConfirmPassword, setShowSignupConfirmPassword] = useState(false)
+    const [showBusinessPassword, setShowBusinessPassword] = useState(false)
+    const [showBusinessSignupPassword, setShowBusinessSignupPassword] = useState(false)
+    const [showBusinessSignupConfirmPassword, setShowBusinessSignupConfirmPassword] = useState(false)
+    const [showCurrentPassword, setShowCurrentPassword] = useState(false)
+    const [showNewPassword, setShowNewPassword] = useState(false)
+    const [showConfirmNewPassword, setShowConfirmNewPassword] = useState(false)
 
     // Firebase authentication state listener
     useEffect(() => {
@@ -158,6 +189,14 @@ function App() {
                     ...prev,
                     ...userData
                 }))
+
+                // Update profile form with user data
+                setProfile({
+                    name: userData.name || '',
+                    email: userData.email || '',
+                    phone: userData.phone || ''
+                })
+
                 if (userData.isBusiness) {
                     setIsBusinessMode(true)
                     setCurrentView('business-dashboard')
@@ -177,7 +216,79 @@ function App() {
             setLoginForm({ email: '', password: '' })
         } catch (error) {
             console.error('Login error:', error)
-            alert('Login failed: ' + error.message)
+            let errorMessage = 'Login failed. Please try again.'
+
+            if (error.code === 'auth/user-not-found') {
+                errorMessage = 'No account found with this email address.'
+            } else if (error.code === 'auth/wrong-password') {
+                errorMessage = 'Incorrect password. Please try again.'
+            } else if (error.code === 'auth/invalid-email') {
+                errorMessage = 'Please enter a valid email address.'
+            } else if (error.code === 'auth/too-many-requests') {
+                errorMessage = 'Too many failed attempts. Please try again later.'
+            }
+
+            alert(errorMessage)
+        }
+    }
+
+    const handleSignup = async (e) => {
+        e.preventDefault()
+        if (signupForm.password !== signupForm.confirmPassword) {
+            alert('Passwords do not match!')
+            return
+        }
+        if (signupForm.password.length < 6) {
+            alert('Password must be at least 6 characters!')
+            return
+        }
+
+        try {
+            // Create Firebase user
+            const userCredential = await createUserWithEmailAndPassword(
+                auth,
+                signupForm.email,
+                signupForm.password
+            )
+
+            const user = userCredential.user
+
+            // Create customer profile in Firestore
+            const customerData = {
+                name: signupForm.name,
+                email: signupForm.email,
+                phone: signupForm.phone,
+                isBusiness: false,
+                signupDate: new Date().toISOString().split('T')[0],
+                plan: "free"
+            }
+
+            // Save user profile
+            await setDoc(doc(db, 'users', user.uid), customerData)
+
+            setShowSignup(false)
+            setSignupForm({
+                name: '',
+                email: '',
+                password: '',
+                confirmPassword: '',
+                phone: ''
+            })
+            alert('Account created successfully! Welcome to BRNNO Services!')
+
+        } catch (error) {
+            console.error('Signup error:', error)
+            let errorMessage = 'Signup failed. Please try again.'
+
+            if (error.code === 'auth/email-already-in-use') {
+                errorMessage = 'An account with this email already exists. Please use a different email or try logging in.'
+            } else if (error.code === 'auth/weak-password') {
+                errorMessage = 'Password is too weak. Please choose a stronger password.'
+            } else if (error.code === 'auth/invalid-email') {
+                errorMessage = 'Please enter a valid email address.'
+            }
+
+            alert(errorMessage)
         }
     }
 
@@ -190,7 +301,19 @@ function App() {
             setBusinessLoginForm({ email: '', password: '' })
         } catch (error) {
             console.error('Business login error:', error)
-            alert('Business login failed: ' + error.message)
+            let errorMessage = 'Business login failed. Please try again.'
+
+            if (error.code === 'auth/user-not-found') {
+                errorMessage = 'No business account found with this email address.'
+            } else if (error.code === 'auth/wrong-password') {
+                errorMessage = 'Incorrect password. Please try again.'
+            } else if (error.code === 'auth/invalid-email') {
+                errorMessage = 'Please enter a valid email address.'
+            } else if (error.code === 'auth/too-many-requests') {
+                errorMessage = 'Too many failed attempts. Please try again later.'
+            }
+
+            alert(errorMessage)
         }
     }
 
@@ -207,6 +330,31 @@ function App() {
         if (businessSignupForm.services.length === 0) {
             alert('Please select at least one service!')
             return
+        }
+        if (!businessSignupForm.businessLicense.trim()) {
+            alert('Please enter your business license number!')
+            return
+        }
+        if (!businessSignupForm.taxId.trim()) {
+            alert('Please enter your Tax ID/EIN!')
+            return
+        }
+        if (!businessSignupForm.businessType) {
+            alert('Please select your business type!')
+            return
+        }
+        if (!businessSignupForm.yearsInBusiness) {
+            alert('Please enter years in business!')
+            return
+        }
+
+        // Business email validation
+        const personalEmailDomains = ['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'aol.com', 'icloud.com', 'live.com', 'msn.com']
+        const emailDomain = businessSignupForm.email.split('@')[1]?.toLowerCase()
+
+        if (personalEmailDomains.includes(emailDomain)) {
+            alert('Please use a business email address (not Gmail, Yahoo, etc.). If you don\'t have a business email, you can still proceed but we recommend getting one for professional purposes.')
+            // Allow them to continue but warn them
         }
 
         try {
@@ -231,7 +379,17 @@ function App() {
                 reviews: 0,
                 signupDate: new Date().toISOString().split('T')[0],
                 plan: "free_trial",
-                trialEndsAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+                trialEndsAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+                // Business verification information
+                businessLicense: businessSignupForm.businessLicense,
+                taxId: businessSignupForm.taxId,
+                businessType: businessSignupForm.businessType,
+                yearsInBusiness: businessSignupForm.yearsInBusiness,
+                insuranceProvider: businessSignupForm.insuranceProvider,
+                insurancePolicyNumber: businessSignupForm.insurancePolicyNumber,
+                verificationStatus: 'pending', // pending, verified, rejected
+                verificationDate: new Date().toISOString(),
+                isVerified: false
             }
 
             // Save user profile
@@ -248,13 +406,29 @@ function App() {
                 confirmPassword: '',
                 phone: '',
                 location: '',
-                services: []
+                services: [],
+                businessLicense: '',
+                taxId: '',
+                businessType: '',
+                yearsInBusiness: '',
+                insuranceProvider: '',
+                insurancePolicyNumber: ''
             })
             alert('Business account created successfully! You can now receive service requests.')
 
         } catch (error) {
             console.error('Business signup error:', error)
-            alert('Signup failed: ' + error.message)
+            let errorMessage = 'Signup failed. Please try again.'
+
+            if (error.code === 'auth/email-already-in-use') {
+                errorMessage = 'An account with this email already exists. Please use a different email or try logging in.'
+            } else if (error.code === 'auth/weak-password') {
+                errorMessage = 'Password is too weak. Please choose a stronger password.'
+            } else if (error.code === 'auth/invalid-email') {
+                errorMessage = 'Please enter a valid email address.'
+            }
+
+            alert(errorMessage)
         }
     }
 
@@ -292,10 +466,57 @@ function App() {
 
     const submitRequest = async (e) => {
         e.preventDefault()
+
+        // Form validation
+        if (!request.serviceDescription.trim()) {
+            alert('Please describe the service you need')
+            return
+        }
+        if (!request.vehicleType) {
+            alert('Please select a vehicle type')
+            return
+        }
+        if (!request.contactName.trim()) {
+            alert('Please enter your contact name')
+            return
+        }
+        if (!request.phone.trim()) {
+            alert('Please enter your phone number')
+            return
+        }
+        if (!request.email.trim()) {
+            alert('Please enter your email address')
+            return
+        }
+        if (!request.date) {
+            alert('Please select a preferred date')
+            return
+        }
+        if (!request.time) {
+            alert('Please select a preferred time')
+            return
+        }
+
+        // Email validation
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+        if (!emailRegex.test(request.email)) {
+            alert('Please enter a valid email address')
+            return
+        }
+
+        // Phone validation (basic)
+        const phoneRegex = /^[\+]?[1-9][\d]{0,15}$/
+        const cleanPhone = request.phone.replace(/[\s\-\(\)]/g, '')
+        if (!phoneRegex.test(cleanPhone)) {
+            alert('Please enter a valid phone number')
+            return
+        }
+
+        setIsSubmitting(true)
         try {
             const newRequest = {
                 detailer: selectedDetailer.name,
-                detailerId: selectedDetailer.id,
+                detailerId: selectedDetailer.id || selectedDetailer.uid, // Use uid for Firebase detailers
                 serviceDescription: request.serviceDescription,
                 vehicleType: request.vehicleType,
                 contactName: request.contactName,
@@ -308,15 +529,27 @@ function App() {
                 customerId: user.uid
             }
 
-            // Save to Firestore
-            const docRef = await addDoc(collection(db, 'requests'), newRequest)
+            // Check if this is a demo business
+            if (selectedDetailer.isDemo) {
+                // Demo mode - simulate success without Firebase
+                const requestWithId = {
+                    ...newRequest,
+                    id: 'demo-' + Date.now(),
+                    isDemo: true // Mark as demo request
+                }
+                setRequests([...requests, requestWithId])
 
-            // Update local state
-            const requestWithId = { ...newRequest, id: docRef.id }
-            setRequests([...requests, requestWithId])
-            setBusinessRequests([...businessRequests, requestWithId])
+                alert(`✅ Demo Success! Service request sent to ${selectedDetailer.name}!\n\nThis is a demo business, so no real booking was made. In a real scenario, they would contact you soon.`)
+            } else {
+                // Real business - save to Firestore
+                const docRef = await addDoc(collection(db, 'requests'), newRequest)
+                const requestWithId = { ...newRequest, id: docRef.id }
+                setRequests([...requests, requestWithId])
+                setBusinessRequests([...businessRequests, requestWithId])
 
-            alert(`Service request sent to ${selectedDetailer.name}! They will contact you soon.`)
+                alert(`Service request sent to ${selectedDetailer.name}! They will contact you soon.`)
+            }
+
             setShowRequestForm(false)
             setShowDetailerProfile(false)
             setRequest({
@@ -331,6 +564,8 @@ function App() {
         } catch (error) {
             console.error('Error submitting request:', error)
             alert('Failed to submit request. Please try again.')
+        } finally {
+            setIsSubmitting(false)
         }
     }
 
@@ -405,7 +640,7 @@ function App() {
         }
     }
 
-    const handlePasswordChange = (e) => {
+    const handlePasswordChange = async (e) => {
         e.preventDefault()
         if (passwordForm.newPassword !== passwordForm.confirmPassword) {
             alert('New passwords do not match!')
@@ -415,20 +650,90 @@ function App() {
             alert('New password must be at least 6 characters!')
             return
         }
-        alert('Password changed successfully!')
-        setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' })
-        setShowPasswordForm(false)
+
+        setIsChangingPassword(true)
+        try {
+            const user = auth.currentUser
+            if (!user) {
+                alert('No user logged in')
+                return
+            }
+
+            // Re-authenticate user with current password
+            const credential = EmailAuthProvider.credential(user.email, passwordForm.currentPassword)
+            await reauthenticateWithCredential(user, credential)
+
+            // Update password
+            await updatePassword(user, passwordForm.newPassword)
+
+            alert('Password changed successfully!')
+            setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' })
+            setShowPasswordForm(false)
+        } catch (error) {
+            console.error('Error changing password:', error)
+            if (error.code === 'auth/wrong-password') {
+                alert('Current password is incorrect!')
+            } else if (error.code === 'auth/weak-password') {
+                alert('New password is too weak!')
+            } else {
+                alert('Failed to change password. Please try again.')
+            }
+        } finally {
+            setIsChangingPassword(false)
+        }
     }
 
-    const handleDeleteProfile = () => {
+    const handleSaveProfile = async () => {
+        if (!user) return
+
+        setIsSavingProfile(true)
+        try {
+            const profileData = {
+                name: profile.name,
+                email: profile.email,
+                phone: profile.phone,
+                updatedAt: new Date().toISOString()
+            }
+
+            await updateDoc(doc(db, 'users', user.uid), profileData)
+
+            // Update local user state
+            setUser(prev => ({
+                ...prev,
+                ...profileData
+            }))
+
+            alert('Profile updated successfully!')
+        } catch (error) {
+            console.error('Error updating profile:', error)
+            alert('Failed to update profile. Please try again.')
+        } finally {
+            setIsSavingProfile(false)
+        }
+    }
+
+    const handleDeleteProfile = async () => {
         if (window.confirm('Are you sure you want to delete your profile? This action cannot be undone and will cancel all your service requests.')) {
             if (window.confirm('This will permanently delete your account and all data. Are you absolutely sure?')) {
-                setIsLoggedIn(false)
-                setUser(null)
-                setRequests([])
-                setProfile({ name: '', email: '', phone: '' })
-                setCurrentView('home')
-                alert('Profile deleted successfully')
+                try {
+                    // Delete user document from Firestore
+                    await deleteDoc(doc(db, 'users', user.uid))
+
+                    // Delete user from Firebase Auth
+                    await deleteUser(auth.currentUser)
+
+                    // Clear local state
+                    setIsLoggedIn(false)
+                    setUser(null)
+                    setRequests([])
+                    setProfile({ name: '', email: '', phone: '' })
+                    setCurrentView('home')
+
+                    alert('Profile deleted successfully')
+                } catch (error) {
+                    console.error('Error deleting profile:', error)
+                    alert('Failed to delete profile. Please try again.')
+                }
             }
         }
     }
@@ -449,11 +754,24 @@ function App() {
 
         return (
             <div className="mb-8">
+                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
+                    <p className="text-yellow-800 text-sm">
+                        <strong>Demo Mode:</strong> The businesses shown below are demo businesses for testing purposes.
+                        In a real deployment, these would be actual registered BRNNO service providers.
+                    </p>
+                </div>
                 <h2 className="text-xl font-semibold text-gray-900 mb-4">Available BRNNO Providers</h2>
                 <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                     {detailersToShow.map(detailer => (
                         <div key={detailer.id} className="bg-white rounded-lg shadow-sm border p-6">
-                            <h3 className="text-lg font-semibold text-gray-900 mb-2">{detailer.name}</h3>
+                            <div className="flex items-center gap-2 mb-2">
+                                <h3 className="text-lg font-semibold text-gray-900">{detailer.name}</h3>
+                                {detailer.isDemo && (
+                                    <span className="bg-blue-100 text-blue-800 text-xs font-medium px-2 py-1 rounded">
+                                        Demo
+                                    </span>
+                                )}
+                            </div>
                             <p className="text-gray-600 mb-2">{detailer.location}</p>
                             <p className="text-gray-600 mb-2">Phone: {detailer.phone}</p>
                             <p className="text-gray-600 mb-2">Rating: {detailer.rating}/5 ({detailer.reviews} reviews)</p>
@@ -513,8 +831,15 @@ function App() {
                         className="w-full border border-gray-300 rounded px-3 py-2"
                     />
                 </div>
-                <button className="bg-blue-600 text-white py-2 px-4 rounded hover:bg-blue-700">
-                    Save Profile
+                <button
+                    onClick={handleSaveProfile}
+                    disabled={isSavingProfile}
+                    className={`py-2 px-4 rounded ${isSavingProfile
+                        ? 'bg-gray-400 cursor-not-allowed'
+                        : 'bg-blue-600 hover:bg-blue-700'
+                        } text-white`}
+                >
+                    {isSavingProfile ? 'Saving...' : 'Save Profile'}
                 </button>
             </div>
 
@@ -534,41 +859,99 @@ function App() {
                     <form onSubmit={handlePasswordChange}>
                         <div className="mb-4">
                             <label className="block text-sm font-medium text-gray-700 mb-1">Current Password</label>
-                            <input
-                                type="password"
-                                required
-                                value={passwordForm.currentPassword}
-                                onChange={(e) => setPasswordForm({ ...passwordForm, currentPassword: e.target.value })}
-                                className="w-full border border-gray-300 rounded px-3 py-2"
-                            />
+                            <div className="relative">
+                                <input
+                                    type={showCurrentPassword ? "text" : "password"}
+                                    required
+                                    value={passwordForm.currentPassword}
+                                    onChange={(e) => setPasswordForm({ ...passwordForm, currentPassword: e.target.value })}
+                                    className="w-full border border-gray-300 rounded px-3 py-2 pr-10"
+                                />
+                                <button
+                                    type="button"
+                                    onClick={() => setShowCurrentPassword(!showCurrentPassword)}
+                                    className="absolute inset-y-0 right-0 pr-3 flex items-center"
+                                >
+                                    {showCurrentPassword ? (
+                                        <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L3 3m6.878 6.878L21 21" />
+                                        </svg>
+                                    ) : (
+                                        <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                                        </svg>
+                                    )}
+                                </button>
+                            </div>
                         </div>
                         <div className="mb-4">
                             <label className="block text-sm font-medium text-gray-700 mb-1">New Password</label>
-                            <input
-                                type="password"
-                                required
-                                minLength="6"
-                                value={passwordForm.newPassword}
-                                onChange={(e) => setPasswordForm({ ...passwordForm, newPassword: e.target.value })}
-                                className="w-full border border-gray-300 rounded px-3 py-2"
-                            />
+                            <div className="relative">
+                                <input
+                                    type={showNewPassword ? "text" : "password"}
+                                    required
+                                    minLength="6"
+                                    value={passwordForm.newPassword}
+                                    onChange={(e) => setPasswordForm({ ...passwordForm, newPassword: e.target.value })}
+                                    className="w-full border border-gray-300 rounded px-3 py-2 pr-10"
+                                />
+                                <button
+                                    type="button"
+                                    onClick={() => setShowNewPassword(!showNewPassword)}
+                                    className="absolute inset-y-0 right-0 pr-3 flex items-center"
+                                >
+                                    {showNewPassword ? (
+                                        <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L3 3m6.878 6.878L21 21" />
+                                        </svg>
+                                    ) : (
+                                        <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                                        </svg>
+                                    )}
+                                </button>
+                            </div>
                         </div>
                         <div className="mb-6">
                             <label className="block text-sm font-medium text-gray-700 mb-1">Confirm New Password</label>
-                            <input
-                                type="password"
-                                required
-                                minLength="6"
-                                value={passwordForm.confirmPassword}
-                                onChange={(e) => setPasswordForm({ ...passwordForm, confirmPassword: e.target.value })}
-                                className="w-full border border-gray-300 rounded px-3 py-2"
-                            />
+                            <div className="relative">
+                                <input
+                                    type={showConfirmNewPassword ? "text" : "password"}
+                                    required
+                                    minLength="6"
+                                    value={passwordForm.confirmPassword}
+                                    onChange={(e) => setPasswordForm({ ...passwordForm, confirmPassword: e.target.value })}
+                                    className="w-full border border-gray-300 rounded px-3 py-2 pr-10"
+                                />
+                                <button
+                                    type="button"
+                                    onClick={() => setShowConfirmNewPassword(!showConfirmNewPassword)}
+                                    className="absolute inset-y-0 right-0 pr-3 flex items-center"
+                                >
+                                    {showConfirmNewPassword ? (
+                                        <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L3 3m6.878 6.878L21 21" />
+                                        </svg>
+                                    ) : (
+                                        <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                                        </svg>
+                                    )}
+                                </button>
+                            </div>
                         </div>
                         <button
                             type="submit"
-                            className="bg-green-600 text-white py-2 px-4 rounded hover:bg-green-700"
+                            disabled={isChangingPassword}
+                            className={`py-2 px-4 rounded ${isChangingPassword
+                                ? 'bg-gray-400 cursor-not-allowed'
+                                : 'bg-green-600 hover:bg-green-700'
+                                } text-white`}
                         >
-                            Change Password
+                            {isChangingPassword ? 'Changing...' : 'Change Password'}
                         </button>
                     </form>
                 )}
@@ -611,12 +994,27 @@ function App() {
                         <div key={request.id} className="bg-white rounded-lg shadow-sm border p-6">
                             <div className="flex justify-between items-start">
                                 <div className="flex-1">
-                                    <h3 className="text-lg font-semibold text-gray-900">{request.detailer}</h3>
+                                    <div className="flex items-center gap-2 mb-2">
+                                        <h3 className="text-lg font-semibold text-gray-900">{request.detailer}</h3>
+                                        {request.isDemo && (
+                                            <span className="bg-blue-100 text-blue-800 text-xs font-medium px-2 py-1 rounded">
+                                                Demo
+                                            </span>
+                                        )}
+                                    </div>
                                     <p className="text-gray-600"><strong>Service:</strong> {request.serviceDescription}</p>
                                     <p className="text-gray-600"><strong>Vehicle Type:</strong> {request.vehicleType}</p>
                                     <p className="text-gray-600"><strong>Contact:</strong> {request.contactName} - {request.phone}</p>
                                     <p className="text-gray-600"><strong>Preferred Date:</strong> {request.date}</p>
                                     <p className="text-gray-600"><strong>Preferred Time:</strong> {request.time}</p>
+                                    {request.isDemo && (
+                                        <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded">
+                                            <p className="text-blue-800 text-sm">
+                                                <strong>Demo Request:</strong> This is a demonstration booking.
+                                                In a real scenario, the business would contact you to discuss pricing and scheduling.
+                                            </p>
+                                        </div>
+                                    )}
                                 </div>
                                 <div className="flex flex-col items-end gap-3">
                                     <span className={`px-3 py-1 rounded text-sm ${request.status === 'accepted'
@@ -629,13 +1027,18 @@ function App() {
                                         }`}>
                                         {request.status}
                                     </span>
-                                    {request.status === 'pending' && (
+                                    {request.status === 'pending' && !request.isDemo && (
                                         <button
                                             onClick={() => cancelRequest(request.id)}
                                             className="px-4 py-2 bg-red-600 text-white text-sm rounded hover:bg-red-700 transition"
                                         >
                                             Cancel Request
                                         </button>
+                                    )}
+                                    {request.isDemo && (
+                                        <span className="text-xs text-gray-500">
+                                            Demo booking
+                                        </span>
                                     )}
                                 </div>
                             </div>
@@ -666,6 +1069,46 @@ function App() {
                     ✅ Free Trial Active - Your account is currently free. Enjoy unlimited booking requests!
                 </p>
             </div>
+
+            {/* Business Verification Status */}
+            {user?.verificationStatus && (
+                <div className={`border rounded-lg p-4 mb-4 ${user.verificationStatus === 'verified'
+                    ? 'bg-green-50 border-green-200'
+                    : user.verificationStatus === 'rejected'
+                        ? 'bg-red-50 border-red-200'
+                        : 'bg-yellow-50 border-yellow-200'
+                    }`}>
+                    <div className="flex items-center gap-2">
+                        {user.verificationStatus === 'verified' && (
+                            <span className="text-green-600">✅</span>
+                        )}
+                        {user.verificationStatus === 'rejected' && (
+                            <span className="text-red-600">❌</span>
+                        )}
+                        {user.verificationStatus === 'pending' && (
+                            <span className="text-yellow-600">⏳</span>
+                        )}
+                        <p className={`font-medium ${user.verificationStatus === 'verified'
+                            ? 'text-green-800'
+                            : user.verificationStatus === 'rejected'
+                                ? 'text-red-800'
+                                : 'text-yellow-800'
+                            }`}>
+                            Business Verification: {user.verificationStatus.charAt(0).toUpperCase() + user.verificationStatus.slice(1)}
+                        </p>
+                    </div>
+                    {user.verificationStatus === 'pending' && (
+                        <p className="text-yellow-700 text-sm mt-1">
+                            Your business information is being reviewed. You'll receive an email once verification is complete.
+                        </p>
+                    )}
+                    {user.verificationStatus === 'rejected' && (
+                        <p className="text-red-700 text-sm mt-1">
+                            Your business verification was rejected. Please contact support for more information.
+                        </p>
+                    )}
+                </div>
+            )}
 
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
                 <p className="text-sm text-blue-800">
@@ -823,9 +1266,9 @@ function App() {
         <div className="min-h-screen bg-gray-50">
             <header className="bg-white shadow-sm border-b">
                 <div className="max-w-6xl mx-auto px-4 py-4">
-                    <div className="flex justify-between items-center">
+                    <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
                         <h1 className="text-2xl font-bold text-gray-900">BRNNO Services</h1>
-                        <nav className="flex items-center gap-4">
+                        <nav className="flex flex-wrap items-center gap-2 sm:gap-4">
                             {isLoggedIn ? (
                                 <>
                                     {!isBusinessMode ? (
@@ -864,7 +1307,7 @@ function App() {
                                         </button>
                                     )}
 
-                                    <div className="flex items-center gap-2 ml-4 pl-4 border-l border-gray-200">
+                                    <div className="flex flex-wrap items-center gap-2 ml-0 sm:ml-4 pl-0 sm:pl-4 border-l-0 sm:border-l border-gray-200">
                                         {user?.isBusiness && (
                                             <button
                                                 onClick={() => {
@@ -888,12 +1331,18 @@ function App() {
                                     </div>
                                 </>
                             ) : (
-                                <div className="flex gap-2">
+                                <div className="flex flex-wrap gap-2">
                                     <button
                                         onClick={() => setShowLogin(true)}
                                         className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
                                     >
                                         Customer Login
+                                    </button>
+                                    <button
+                                        onClick={() => setShowSignup(true)}
+                                        className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700"
+                                    >
+                                        Customer Signup
                                     </button>
                                     <button
                                         onClick={() => setShowBusinessLogin(true)}
@@ -903,7 +1352,7 @@ function App() {
                                     </button>
                                     <button
                                         onClick={() => setShowBusinessSignup(true)}
-                                        className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700"
+                                        className="bg-orange-600 text-white px-4 py-2 rounded hover:bg-orange-700"
                                     >
                                         Business Signup
                                     </button>
@@ -923,9 +1372,9 @@ function App() {
             </main>
 
             {showLogin && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
-                    <div className="bg-white rounded-lg p-6 w-full max-w-md">
-                        <h3 className="text-lg font-semibold mb-4">Login</h3>
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+                    <div className="bg-white rounded-lg p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
+                        <h3 className="text-lg font-semibold mb-4">Customer Login</h3>
                         <form onSubmit={handleLogin}>
                             <div className="mb-4">
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
@@ -939,13 +1388,31 @@ function App() {
                             </div>
                             <div className="mb-6">
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
-                                <input
-                                    type="password"
-                                    required
-                                    value={loginForm.password}
-                                    onChange={(e) => setLoginForm({ ...loginForm, password: e.target.value })}
-                                    className="w-full border border-gray-300 rounded px-3 py-2"
-                                />
+                                <div className="relative">
+                                    <input
+                                        type={showPassword ? "text" : "password"}
+                                        required
+                                        value={loginForm.password}
+                                        onChange={(e) => setLoginForm({ ...loginForm, password: e.target.value })}
+                                        className="w-full border border-gray-300 rounded px-3 py-2 pr-10"
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowPassword(!showPassword)}
+                                        className="absolute inset-y-0 right-0 pr-3 flex items-center"
+                                    >
+                                        {showPassword ? (
+                                            <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L3 3m6.878 6.878L21 21" />
+                                            </svg>
+                                        ) : (
+                                            <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                                            </svg>
+                                        )}
+                                    </button>
+                                </div>
                             </div>
                             <div className="flex gap-3">
                                 <button
@@ -969,11 +1436,143 @@ function App() {
                                         type="button"
                                         onClick={() => {
                                             setShowLogin(false)
-                                            setShowBusinessSignup(true)
+                                            setShowSignup(true)
                                         }}
-                                        className="text-purple-600 hover:text-purple-700 font-medium ml-1"
+                                        className="text-green-600 hover:text-green-700 font-medium ml-1"
                                     >
-                                        Sign up as Business
+                                        Sign up as Customer
+                                    </button>
+                                </p>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {showSignup && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+                    <div className="bg-white rounded-lg p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
+                        <h3 className="text-lg font-semibold mb-4">Customer Signup</h3>
+                        <form onSubmit={handleSignup}>
+                            <div className="mb-4">
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
+                                <input
+                                    type="text"
+                                    required
+                                    placeholder="Your full name"
+                                    value={signupForm.name}
+                                    onChange={(e) => setSignupForm({ ...signupForm, name: e.target.value })}
+                                    className="w-full border border-gray-300 rounded px-3 py-2"
+                                />
+                            </div>
+                            <div className="mb-4">
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                                <input
+                                    type="email"
+                                    required
+                                    placeholder="your@email.com"
+                                    value={signupForm.email}
+                                    onChange={(e) => setSignupForm({ ...signupForm, email: e.target.value })}
+                                    className="w-full border border-gray-300 rounded px-3 py-2"
+                                />
+                            </div>
+                            <div className="mb-4">
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
+                                <input
+                                    type="tel"
+                                    placeholder="(555) 123-4567"
+                                    value={signupForm.phone}
+                                    onChange={(e) => setSignupForm({ ...signupForm, phone: e.target.value })}
+                                    className="w-full border border-gray-300 rounded px-3 py-2"
+                                />
+                            </div>
+                            <div className="mb-4">
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                                <div className="relative">
+                                    <input
+                                        type={showSignupPassword ? "text" : "password"}
+                                        required
+                                        minLength="6"
+                                        placeholder="Minimum 6 characters"
+                                        value={signupForm.password}
+                                        onChange={(e) => setSignupForm({ ...signupForm, password: e.target.value })}
+                                        className="w-full border border-gray-300 rounded px-3 py-2 pr-10"
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowSignupPassword(!showSignupPassword)}
+                                        className="absolute inset-y-0 right-0 pr-3 flex items-center"
+                                    >
+                                        {showSignupPassword ? (
+                                            <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L3 3m6.878 6.878L21 21" />
+                                            </svg>
+                                        ) : (
+                                            <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                                            </svg>
+                                        )}
+                                    </button>
+                                </div>
+                            </div>
+                            <div className="mb-6">
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Confirm Password</label>
+                                <div className="relative">
+                                    <input
+                                        type={showSignupConfirmPassword ? "text" : "password"}
+                                        required
+                                        minLength="6"
+                                        placeholder="Confirm your password"
+                                        value={signupForm.confirmPassword}
+                                        onChange={(e) => setSignupForm({ ...signupForm, confirmPassword: e.target.value })}
+                                        className="w-full border border-gray-300 rounded px-3 py-2 pr-10"
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowSignupConfirmPassword(!showSignupConfirmPassword)}
+                                        className="absolute inset-y-0 right-0 pr-3 flex items-center"
+                                    >
+                                        {showSignupConfirmPassword ? (
+                                            <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L3 3m6.878 6.878L21 21" />
+                                            </svg>
+                                        ) : (
+                                            <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                                            </svg>
+                                        )}
+                                    </button>
+                                </div>
+                            </div>
+                            <div className="flex gap-3">
+                                <button
+                                    type="button"
+                                    onClick={() => setShowSignup(false)}
+                                    className="flex-1 bg-gray-300 text-gray-700 py-2 px-4 rounded hover:bg-gray-400"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="submit"
+                                    className="flex-1 bg-green-600 text-white py-2 px-4 rounded hover:bg-green-700"
+                                >
+                                    Create Account
+                                </button>
+                            </div>
+                            <div className="mt-4 text-center">
+                                <p className="text-sm text-gray-600">
+                                    Already have an account?
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setShowSignup(false)
+                                            setShowLogin(true)
+                                        }}
+                                        className="text-blue-600 hover:text-blue-700 font-medium ml-1"
+                                    >
+                                        Login here
                                     </button>
                                 </p>
                             </div>
@@ -983,8 +1582,8 @@ function App() {
             )}
 
             {showBusinessLogin && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
-                    <div className="bg-white rounded-lg p-6 w-full max-w-md">
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+                    <div className="bg-white rounded-lg p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
                         <h3 className="text-lg font-semibold mb-4">Business Login</h3>
                         <form onSubmit={handleBusinessLogin}>
                             <div className="mb-4">
@@ -999,13 +1598,31 @@ function App() {
                             </div>
                             <div className="mb-6">
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
-                                <input
-                                    type="password"
-                                    required
-                                    value={businessLoginForm.password}
-                                    onChange={(e) => setBusinessLoginForm({ ...businessLoginForm, password: e.target.value })}
-                                    className="w-full border border-gray-300 rounded px-3 py-2"
-                                />
+                                <div className="relative">
+                                    <input
+                                        type={showBusinessPassword ? "text" : "password"}
+                                        required
+                                        value={businessLoginForm.password}
+                                        onChange={(e) => setBusinessLoginForm({ ...businessLoginForm, password: e.target.value })}
+                                        className="w-full border border-gray-300 rounded px-3 py-2 pr-10"
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowBusinessPassword(!showBusinessPassword)}
+                                        className="absolute inset-y-0 right-0 pr-3 flex items-center"
+                                    >
+                                        {showBusinessPassword ? (
+                                            <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L3 3m6.878 6.878L21 21" />
+                                            </svg>
+                                        ) : (
+                                            <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                                            </svg>
+                                        )}
+                                    </button>
+                                </div>
                             </div>
                             <div className="flex gap-3">
                                 <button
@@ -1043,7 +1660,7 @@ function App() {
             )}
 
             {showBusinessSignup && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
                     <div className="bg-white rounded-lg p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto">
                         <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-6">
                             <p className="text-green-800 font-medium text-center">
@@ -1064,15 +1681,18 @@ function App() {
                                 />
                             </div>
                             <div className="mb-4">
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Business Email *</label>
                                 <input
                                     type="email"
                                     required
-                                    placeholder="business@example.com"
+                                    placeholder="business@yourcompany.com"
                                     value={businessSignupForm.email}
                                     onChange={(e) => setBusinessSignupForm({ ...businessSignupForm, email: e.target.value })}
                                     className="w-full border border-gray-300 rounded px-3 py-2"
                                 />
+                                <p className="text-xs text-gray-600 mt-1">
+                                    Use your business email address (not Gmail, Yahoo, etc.) for professional verification
+                                </p>
                             </div>
                             <div className="mb-4">
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
@@ -1112,29 +1732,165 @@ function App() {
                                     ))}
                                 </div>
                             </div>
+
+                            {/* Business Verification Section */}
+                            <div className="border-t border-gray-200 pt-4 mb-4">
+                                <h4 className="text-lg font-medium text-gray-900 mb-4">Business Verification</h4>
+
+                                <div className="mb-4">
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Business License Number *</label>
+                                    <input
+                                        type="text"
+                                        required
+                                        placeholder="e.g., BL-2024-001234"
+                                        value={businessSignupForm.businessLicense}
+                                        onChange={(e) => setBusinessSignupForm({ ...businessSignupForm, businessLicense: e.target.value })}
+                                        className="w-full border border-gray-300 rounded px-3 py-2"
+                                    />
+                                </div>
+
+                                <div className="mb-4">
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Tax ID / EIN *</label>
+                                    <input
+                                        type="text"
+                                        required
+                                        placeholder="e.g., 12-3456789"
+                                        value={businessSignupForm.taxId}
+                                        onChange={(e) => setBusinessSignupForm({ ...businessSignupForm, taxId: e.target.value })}
+                                        className="w-full border border-gray-300 rounded px-3 py-2"
+                                    />
+                                </div>
+
+                                <div className="mb-4">
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Business Type *</label>
+                                    <select
+                                        required
+                                        value={businessSignupForm.businessType}
+                                        onChange={(e) => setBusinessSignupForm({ ...businessSignupForm, businessType: e.target.value })}
+                                        className="w-full border border-gray-300 rounded px-3 py-2"
+                                    >
+                                        <option value="">Select business type</option>
+                                        <option value="Sole Proprietorship">Sole Proprietorship</option>
+                                        <option value="LLC">LLC</option>
+                                        <option value="Corporation">Corporation</option>
+                                        <option value="Partnership">Partnership</option>
+                                        <option value="S-Corp">S-Corporation</option>
+                                    </select>
+                                </div>
+
+                                <div className="mb-4">
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Years in Business *</label>
+                                    <select
+                                        required
+                                        value={businessSignupForm.yearsInBusiness}
+                                        onChange={(e) => setBusinessSignupForm({ ...businessSignupForm, yearsInBusiness: e.target.value })}
+                                        className="w-full border border-gray-300 rounded px-3 py-2"
+                                    >
+                                        <option value="">Select years in business</option>
+                                        <option value="Less than 1 year">Less than 1 year</option>
+                                        <option value="1-2 years">1-2 years</option>
+                                        <option value="3-5 years">3-5 years</option>
+                                        <option value="6-10 years">6-10 years</option>
+                                        <option value="10+ years">10+ years</option>
+                                    </select>
+                                </div>
+
+                                <div className="mb-4">
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Insurance Provider</label>
+                                    <input
+                                        type="text"
+                                        placeholder="e.g., State Farm, Allstate"
+                                        value={businessSignupForm.insuranceProvider}
+                                        onChange={(e) => setBusinessSignupForm({ ...businessSignupForm, insuranceProvider: e.target.value })}
+                                        className="w-full border border-gray-300 rounded px-3 py-2"
+                                    />
+                                </div>
+
+                                <div className="mb-4">
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Insurance Policy Number</label>
+                                    <input
+                                        type="text"
+                                        placeholder="e.g., SF-2024-001234"
+                                        value={businessSignupForm.insurancePolicyNumber}
+                                        onChange={(e) => setBusinessSignupForm({ ...businessSignupForm, insurancePolicyNumber: e.target.value })}
+                                        className="w-full border border-gray-300 rounded px-3 py-2"
+                                    />
+                                </div>
+
+                                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+                                    <p className="text-blue-800 text-sm">
+                                        <strong>Verification Process:</strong> Your business information will be verified within 1-2 business days.
+                                        You'll receive an email notification once verification is complete.
+                                    </p>
+                                </div>
+
+                                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4">
+                                    <p className="text-amber-800 text-sm">
+                                        <strong>Business Email Required:</strong> We recommend using a professional business email address
+                                        (e.g., contact@yourbusiness.com) rather than personal email providers (Gmail, Yahoo, etc.)
+                                        for better verification and professional appearance.
+                                    </p>
+                                </div>
+                            </div>
                             <div className="mb-4">
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
-                                <input
-                                    type="password"
-                                    required
-                                    minLength="6"
-                                    placeholder="Minimum 6 characters"
-                                    value={businessSignupForm.password}
-                                    onChange={(e) => setBusinessSignupForm({ ...businessSignupForm, password: e.target.value })}
-                                    className="w-full border border-gray-300 rounded px-3 py-2"
-                                />
+                                <div className="relative">
+                                    <input
+                                        type={showBusinessSignupPassword ? "text" : "password"}
+                                        required
+                                        minLength="6"
+                                        placeholder="Minimum 6 characters"
+                                        value={businessSignupForm.password}
+                                        onChange={(e) => setBusinessSignupForm({ ...businessSignupForm, password: e.target.value })}
+                                        className="w-full border border-gray-300 rounded px-3 py-2 pr-10"
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowBusinessSignupPassword(!showBusinessSignupPassword)}
+                                        className="absolute inset-y-0 right-0 pr-3 flex items-center"
+                                    >
+                                        {showBusinessSignupPassword ? (
+                                            <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L3 3m6.878 6.878L21 21" />
+                                            </svg>
+                                        ) : (
+                                            <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                                            </svg>
+                                        )}
+                                    </button>
+                                </div>
                             </div>
                             <div className="mb-6">
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Confirm Password</label>
-                                <input
-                                    type="password"
-                                    required
-                                    minLength="6"
-                                    placeholder="Confirm your password"
-                                    value={businessSignupForm.confirmPassword}
-                                    onChange={(e) => setBusinessSignupForm({ ...businessSignupForm, confirmPassword: e.target.value })}
-                                    className="w-full border border-gray-300 rounded px-3 py-2"
-                                />
+                                <div className="relative">
+                                    <input
+                                        type={showBusinessSignupConfirmPassword ? "text" : "password"}
+                                        required
+                                        minLength="6"
+                                        placeholder="Confirm your password"
+                                        value={businessSignupForm.confirmPassword}
+                                        onChange={(e) => setBusinessSignupForm({ ...businessSignupForm, confirmPassword: e.target.value })}
+                                        className="w-full border border-gray-300 rounded px-3 py-2 pr-10"
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowBusinessSignupConfirmPassword(!showBusinessSignupConfirmPassword)}
+                                        className="absolute inset-y-0 right-0 pr-3 flex items-center"
+                                    >
+                                        {showBusinessSignupConfirmPassword ? (
+                                            <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L3 3m6.878 6.878L21 21" />
+                                            </svg>
+                                        ) : (
+                                            <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                                            </svg>
+                                        )}
+                                    </button>
+                                </div>
                             </div>
                             <div className="flex gap-3">
                                 <button
@@ -1157,8 +1913,8 @@ function App() {
             )}
 
             {showDetailerProfile && selectedDetailer && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
-                    <div className="bg-white rounded-lg p-6 w-full max-w-md">
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+                    <div className="bg-white rounded-lg p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
                         <h3 className="text-lg font-semibold mb-4">{selectedDetailer.name}</h3>
                         <div className="space-y-3 mb-6">
                             <p><strong>Location:</strong> {selectedDetailer.location}</p>
@@ -1185,7 +1941,7 @@ function App() {
             )}
 
             {showRequestForm && selectedDetailer && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
                     <div className="bg-white rounded-lg p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto">
                         <h3 className="text-lg font-semibold mb-4">Request Service from {selectedDetailer.name}</h3>
                         <form onSubmit={submitRequest}>
@@ -1288,9 +2044,13 @@ function App() {
                                 </button>
                                 <button
                                     type="submit"
-                                    className="flex-1 bg-blue-600 text-white py-2 px-4 rounded hover:bg-blue-700"
+                                    disabled={isSubmitting}
+                                    className={`flex-1 py-2 px-4 rounded ${isSubmitting
+                                        ? 'bg-gray-400 cursor-not-allowed'
+                                        : 'bg-blue-600 hover:bg-blue-700'
+                                        } text-white`}
                                 >
-                                    Send Request
+                                    {isSubmitting ? 'Sending...' : 'Send Request'}
                                 </button>
                             </div>
                         </form>
